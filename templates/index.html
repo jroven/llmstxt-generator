@@ -115,6 +115,13 @@
         border-color: var(--line);
       }
 
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        box-shadow: none;
+        filter: grayscale(20%);
+      }
+
       .meta {
         margin-top: 0.8rem;
         color: var(--muted);
@@ -172,7 +179,7 @@
       }
 
       function App() {
-        const [url, setUrl] = useState("https://eurovisionworld.com/");
+        const [url, setUrl] = useState("");
         const [maxDepth, setMaxDepth] = useState(1);
         const [maxPages, setMaxPages] = useState(20);
         const [loading, setLoading] = useState(false);
@@ -180,7 +187,7 @@
         const [result, setResult] = useState("");
         const [stats, setStats] = useState(null);
         const [progress, setProgress] = useState(null);
-        const [downloadFilename, setDownloadFilename] = useState("llms.txt");
+        const [downloadFilename, setDownloadFilename] = useState("");
 
         const canDownload = useMemo(() => result.trim().length > 0, [result]);
 
@@ -191,6 +198,7 @@
           setStats(null);
           setProgress(null);
           setResult("");
+          setDownloadFilename("");
 
           try {
             const startResponse = await fetch("/api/generate/start", {
@@ -216,7 +224,7 @@
             }
 
             while (true) {
-              await new Promise((resolve) => setTimeout(resolve, 1000));
+              await new Promise((resolve) => setTimeout(resolve, 300));
               const jobResponse = await fetch(`/api/jobs/${jobId}`);
               const job = await jobResponse.json();
               if (!jobResponse.ok) {
@@ -332,16 +340,18 @@
                   </button>
                 </div>
 
-                <div style={{ marginTop: "0.75rem" }}>
-                  <label htmlFor="filename">Download Filename</label>
-                  <input
-                    id="filename"
-                    type="text"
-                    value={downloadFilename}
-                    onChange={(e) => setDownloadFilename(e.target.value)}
-                    placeholder="example-com-llms.txt"
-                  />
-                </div>
+                {canDownload && (
+                  <div style={{ marginTop: "0.75rem" }}>
+                    <label htmlFor="filename">Download Filename</label>
+                    <input
+                      id="filename"
+                      type="text"
+                      value={downloadFilename}
+                      onChange={(e) => setDownloadFilename(e.target.value)}
+                      placeholder="example-com-llms.txt"
+                    />
+                  </div>
+                )}
               </form>
 
               {stats && (

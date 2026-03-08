@@ -262,6 +262,12 @@ async def render_index(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/healthz", response_class=JSONResponse, include_in_schema=False)
+async def healthz() -> JSONResponse:
+    """Lightweight health endpoint for uptime checks."""
+    return JSONResponse(content={"status": "ok"})
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> Response:
     """Return an empty favicon response to avoid 404 noise in logs."""
