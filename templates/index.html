@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>llms.txt Generator</title>
+    <style>
+      :root {
+        --bg: #f7f5ef;
+        --panel: #fffdf7;
+        --ink: #1f2a24;
+        --muted: #5f6c63;
+        --line: #d8d2c2;
+        --accent: #0f7b6c;
+        --accent-ink: #e7f7f4;
+        --error-bg: #ffe8e3;
+        --error-ink: #8a1f12;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 12% 12%, #f0e7d6 0%, rgba(240, 231, 214, 0) 45%),
+          radial-gradient(circle at 85% 20%, #d6eee8 0%, rgba(214, 238, 232, 0) 40%),
+          var(--bg);
+        color: var(--ink);
+        font-family: "Avenir Next", "Segoe UI", "Gill Sans", sans-serif;
+      }
+
+      .page {
+        width: min(980px, calc(100% - 2rem));
+        margin: 2.5rem auto;
+      }
+
+      .hero {
+        margin-bottom: 1.25rem;
+      }
+
+      .title {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 2.8rem);
+        letter-spacing: 0.02em;
+      }
+
+      .subtitle {
+        margin: 0.5rem 0 0;
+        color: var(--muted);
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 1rem;
+        box-shadow: 0 8px 30px rgba(17, 34, 28, 0.06);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.8rem;
+      }
+
+      @media (min-width: 760px) {
+        .grid {
+          grid-template-columns: 2fr 1fr 1fr;
+        }
+      }
+
+      label {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.7rem 0.75rem;
+        font-size: 0.96rem;
+        background: #fff;
+      }
+
+      .actions {
+        margin-top: 0.8rem;
+        display: flex;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 1px solid transparent;
+        border-radius: 10px;
+        padding: 0.62rem 0.9rem;
+        cursor: pointer;
+        font-size: 0.92rem;
+        font-weight: 600;
+      }
+
+      .btn-primary {
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+
+      .btn-secondary {
+        background: #fff;
+        color: var(--ink);
+        border-color: var(--line);
+      }
+
+      .meta {
+        margin-top: 0.8rem;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .error {
+        margin-top: 0.8rem;
+        background: var(--error-bg);
+        color: var(--error-ink);
+        border: 1px solid #f5b8ad;
+        border-radius: 10px;
+        padding: 0.65rem 0.75rem;
+        white-space: pre-wrap;
+      }
+
+      .output {
+        margin-top: 1rem;
+      }
+
+      pre {
+        margin: 0.6rem 0 0;
+        padding: 0.9rem;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #fbfaf6;
+        overflow: auto;
+        max-height: 58vh;
+        font-family: "SF Mono", "Menlo", "Consolas", monospace;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    {% raw %}
+    <script type="text/babel">
+      const { useMemo, useState } = React;
+
+      function buildDefaultFilenameFromUrl(rawUrl) {
+        try {
+          const parsed = new URL(rawUrl);
+          let host = (parsed.hostname || "").toLowerCase();
+          if (host.startsWith("www.")) {
+            host = host.slice(4);
+          }
+          const sanitizedHost = host.replace(/\./g, "-") || "site";
+          return `${sanitizedHost}-llms.txt`;
+        } catch {
+          return "site-llms.txt";
+        }
+      }
+
+      function App() {
+        const [url, setUrl] = useState("https://eurovisionworld.com/");
+        const [maxDepth, setMaxDepth] = useState(1);
+        const [maxPages, setMaxPages] = useState(20);
+        const [loading, setLoading] = useState(false);
+        const [error, setError] = useState("");
+        const [result, setResult] = useState("");
+        const [stats, setStats] = useState(null);
+        const [progress, setProgress] = useState(null);
+        const [downloadFilename, setDownloadFilename] = useState("llms.txt");
+
+        const canDownload = useMemo(() => result.trim().length > 0, [result]);
+
+        async function onSubmit(event) {
+          event.preventDefault();
+          setLoading(true);
+          setError("");
+          setStats(null);
+          setProgress(null);
+          setResult("");
+
+          try {
+            const startResponse = await fetch("/api/generate/start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                url,
+                max_depth: Number(maxDepth),
+                max_pages: Number(maxPages),
+              }),
+            });
+
+            const startBody = await startResponse.json();
+            if (!startResponse.ok) {
+              setError(startBody.message || "Generation failed.");
+              return;
+            }
+
+            const jobId = startBody.job_id;
+            if (!jobId) {
+              setError("Generation failed: missing job id.");
+              return;
+            }
+
+            while (true) {
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              const jobResponse = await fetch(`/api/jobs/${jobId}`);
+              const job = await jobResponse.json();
+              if (!jobResponse.ok) {
+                setError(job.message || "Generation failed while polling.");
+                return;
+              }
+
+              setProgress({
+                stage: job.stage,
+                message: job.message,
+                status: job.status,
+                discovered: job.discovered_pages || 0,
+                processed: job.processed_pages || 0,
+                failedCount: job.failed_count || 0,
+              });
+
+              if (job.status === "done") {
+                setResult(job.llms_txt || "");
+                setDownloadFilename(buildDefaultFilenameFromUrl(job.source_url || ""));
+                setStats({
+                  discovered: job.discovered_pages || 0,
+                  processed: job.processed_pages || 0,
+                  source: job.source_url || "",
+                  failed: job.failed_pages || [],
+                });
+                break;
+              }
+
+              if (job.status === "failed") {
+                setError((job.error && job.error.message) || job.message || "Generation failed.");
+                break;
+              }
+            }
+          } catch (err) {
+            setError(`Request failed: ${String(err)}`);
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        function copyOutput() {
+          navigator.clipboard.writeText(result).catch(() => {});
+        }
+
+        function downloadOutput() {
+          const blob = new Blob([result], { type: "text/plain;charset=utf-8" });
+          const href = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = href;
+          link.download = (downloadFilename || "").trim() || "llms.txt";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(href);
+        }
+
+        return (
+          <main className="page">
+            <section className="hero">
+              <h1 className="title">llms.txt Generator</h1>
+              <p className="subtitle">Crawl a site, extract metadata, and generate a clean llms.txt file.</p>
+            </section>
+
+            <section className="card">
+              <form onSubmit={onSubmit}>
+                <div className="grid">
+                  <div>
+                    <label htmlFor="url">Site URL</label>
+                    <input
+                      id="url"
+                      type="text"
+                      placeholder="example.com or https://example.com"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="max-depth">Max Depth</label>
+                    <input
+                      id="max-depth"
+                      type="number"
+                      min="0"
+                      max="5"
+                      value={maxDepth}
+                      onChange={(e) => setMaxDepth(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="max-pages">Max Pages</label>
+                    <input
+                      id="max-pages"
+                      type="number"
+                      min="1"
+                      max="200"
+                      value={maxPages}
+                      onChange={(e) => setMaxPages(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="actions">
+                  <button type="submit" className="btn-primary" disabled={loading}>
+                    {loading ? "Generating..." : "Generate"}
+                  </button>
+                  <button type="button" className="btn-secondary" disabled={!canDownload} onClick={downloadOutput}>
+                    Download Output
+                  </button>
+                  <button type="button" className="btn-secondary" disabled={!canDownload} onClick={copyOutput}>
+                    Copy Output
+                  </button>
+                </div>
+
+                <div style={{ marginTop: "0.75rem" }}>
+                  <label htmlFor="filename">Download Filename</label>
+                  <input
+                    id="filename"
+                    type="text"
+                    value={downloadFilename}
+                    onChange={(e) => setDownloadFilename(e.target.value)}
+                    placeholder="example-com-llms.txt"
+                  />
+                </div>
+              </form>
+
+              {stats && (
+                <div className="meta">
+                  Source: {stats.source} | Crawled: {stats.discovered} | Processed: {stats.processed} | Failed: {stats.failed.length}
+                </div>
+              )}
+
+              {progress && loading && (
+                <div className="meta">
+                  Stage: {progress.stage} | {progress.message} | Crawled: {progress.discovered} | Processed: {progress.processed} | Failed: {progress.failedCount}
+                </div>
+              )}
+
+              {stats && stats.failed.length > 0 && (
+                <section className="output">
+                  <h2>Failed Pages</h2>
+                  <pre>
+                    {stats.failed
+                      .map((item) => `- ${item.url} (${item.code})\n  ${item.reason}`)
+                      .join("\n")}
+                  </pre>
+                </section>
+              )}
+
+              {error && <div className="error">{error}</div>}
+
+              {result && (
+                <section className="output">
+                  <h2>Generated Output</h2>
+                  <pre>{result}</pre>
+                </section>
+              )}
+            </section>
+          </main>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("app")).render(<App />);
+    </script>
+    {% endraw %}
+  </body>
+</html>
