@@ -4,14 +4,23 @@ from __future__ import annotations
 
 from collections import deque
 from html.parser import HTMLParser
+import time
 from typing import Any, Callable, List
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
+from core.constants import (
+    CRAWL_DENY_PATH_PREFIXES,
+    CRAWL_DENY_QUERY_KEYS,
+    DEFAULT_MAX_DEPTH,
+    DEFAULT_MAX_PAGES,
+    JOB_POLL_INTERVAL_MS,
+    MAX_DEPTH_CAP,
+    MAX_PAGES_CAP,
+    PAGINATION_QUERY_KEYS,
+)
 from core.errors import AppValidationError, CrawlError
 from services.fetch_cache import RunFetchCache
 from services.http_fetcher import shared_http_fetcher
-
-MAX_HTML_BYTES = 2_000_000
 
 
 class _LinkParser(HTMLParser):
@@ -67,6 +76,33 @@ def _normalized_host(url: str) -> str | None:
     return host
 
 
+def _normalize_crawl_identity(url: str) -> str:
+    """Normalize crawl identity by removing pagination query parameters."""
+    parts = urlsplit(url)
+    filtered_query_items = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key.lower() not in PAGINATION_QUERY_KEYS
+    ]
+    normalized_query = urlencode(filtered_query_items, doseq=True)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, normalized_query, ""))
+
+
+def _is_denied_url(url: str) -> bool:
+    """Return True when URL matches denylisted crawl patterns."""
+    parts = urlsplit(url)
+    path_lower = (parts.path or "/").lower()
+    if any(path_lower.startswith(prefix) for prefix in CRAWL_DENY_PATH_PREFIXES):
+        return True
+
+    query_items = parse_qsl(parts.query, keep_blank_values=True)
+    query_keys = {key.lower() for key, _ in query_items}
+    if any(deny_key in query_keys for deny_key in CRAWL_DENY_QUERY_KEYS):
+        return True
+
+    return False
+
+
 def _fetch_html(
     url: str, fetch_cache: RunFetchCache | None = None
 ) -> tuple[str, str]:
@@ -82,8 +118,8 @@ def _fetch_html(
 
 def crawl_site(
     start_url: str,
-    max_depth: int = 1,
-    max_pages: int = 50,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    max_pages: int = DEFAULT_MAX_PAGES,
     fetch_cache: RunFetchCache | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> List[str]:
@@ -108,14 +144,19 @@ def crawl_site(
             "max_depth must be greater than or equal to 0.",
             details={"field": "max_depth", "value": max_depth},
         )
+    if max_depth > MAX_DEPTH_CAP:
+        raise AppValidationError(
+            f"max_depth must be less than or equal to {MAX_DEPTH_CAP}.",
+            details={"field": "max_depth", "value": max_depth},
+        )
     if max_pages < 0:
         raise AppValidationError(
             "max_pages must be greater than or equal to 0.",
             details={"field": "max_pages", "value": max_pages},
         )
-    if max_pages > 200:
+    if max_pages > MAX_PAGES_CAP:
         raise AppValidationError(
-            "max_pages must be less than or equal to 200.",
+            f"max_pages must be less than or equal to {MAX_PAGES_CAP}.",
             details={"field": "max_pages", "value": max_pages},
         )
 
@@ -138,32 +179,49 @@ def crawl_site(
 
     # BFS queue entries: (absolute_url, depth_from_start).
     queue: deque[tuple[str, int]] = deque([(normalized_start, 0)])
-    queued: set[str] = {normalized_start}
-    visited: set[str] = set()
+    queued_identities: set[str] = {_normalize_crawl_identity(normalized_start)}
+    visited_identities: set[str] = set()
     discovered_urls: list[str] = []
+    discovered_identities: set[str] = set()
+    last_progress_emit = 0.0
+    progress_interval_seconds = JOB_POLL_INTERVAL_MS / 1000.0
+
+    def _emit_crawl_progress(current_url: str, depth: int, *, force: bool = False) -> None:
+        """Emit crawl progress updates with time-based throttling."""
+        nonlocal last_progress_emit
+        if not progress_callback:
+            return
+
+        now = time.monotonic()
+        if not force and (now - last_progress_emit) < progress_interval_seconds:
+            return
+
+        last_progress_emit = now
+        progress_callback(
+            {
+                "stage": "crawling",
+                "message": f"Crawling ({len(discovered_urls)}/{max_pages})...",
+                "current_url": current_url,
+                "current_depth": depth,
+                "crawled_count": len(discovered_urls),
+                "discovered_pages": len(discovered_urls),
+                "queued_count": len(queue),
+                "visited_count": len(visited_identities),
+            }
+        )
 
     while queue and len(discovered_urls) < max_pages:
         current_url, depth = queue.popleft()
-        queued.discard(current_url)
-        if current_url in visited:
+        current_identity = _normalize_crawl_identity(current_url)
+        queued_identities.discard(current_identity)
+        if current_identity in visited_identities:
             continue
 
-        if progress_callback:
-            progress_callback(
-                {
-                    "stage": "crawling",
-                    "message": f"Crawling ({len(discovered_urls)}/{max_pages})...",
-                    "current_url": current_url,
-                    "current_depth": depth,
-                    "crawled_count": len(discovered_urls),
-                    "discovered_pages": len(discovered_urls),
-                    "queued_count": len(queue),
-                    "visited_count": len(visited),
-                }
-            )
+        # Routine progress emits are throttled to reduce lock/write churn.
+        _emit_crawl_progress(current_url, depth)
 
         # Mark as visited exactly once before attempting network fetch.
-        visited.add(current_url)
+        visited_identities.add(current_identity)
 
         try:
             html, final_url = _fetch_html(current_url, fetch_cache=fetch_cache)
@@ -198,21 +256,15 @@ def crawl_site(
 
         # Record URL only after a successful in-scope fetch.
         discovered_url = normalized_final_url
-        if discovered_url not in discovered_urls:
+        if _is_denied_url(discovered_url):
+            continue
+
+        discovered_identity = _normalize_crawl_identity(discovered_url)
+        if discovered_identity not in discovered_identities:
             discovered_urls.append(discovered_url)
-            if progress_callback:
-                progress_callback(
-                    {
-                        "stage": "crawling",
-                        "message": f"Crawling ({len(discovered_urls)}/{max_pages})...",
-                        "current_url": discovered_url,
-                        "current_depth": depth,
-                        "crawled_count": len(discovered_urls),
-                        "discovered_pages": len(discovered_urls),
-                        "queued_count": len(queue),
-                        "visited_count": len(visited),
-                    }
-                )
+            discovered_identities.add(discovered_identity)
+            # New discovered page is a significant state change; emit immediately.
+            _emit_crawl_progress(discovered_url, depth, force=True)
 
         # Respect depth cap: include this URL, but do not expand its links.
         if depth >= max_depth:
@@ -227,6 +279,9 @@ def crawl_site(
             normalized_link = _normalize_url(absolute_link)
             if not normalized_link:
                 continue
+            if _is_denied_url(normalized_link):
+                continue
+            identity_link = _normalize_crawl_identity(normalized_link)
 
             # Only crawl links under the same canonical host.
             link_host = _normalized_host(normalized_link)
@@ -234,10 +289,10 @@ def crawl_site(
                 continue
 
             # Skip duplicate or already queued links.
-            if normalized_link in visited or normalized_link in queued:
+            if identity_link in visited_identities or identity_link in queued_identities:
                 continue
 
             queue.append((normalized_link, depth + 1))
-            queued.add(normalized_link)
+            queued_identities.add(identity_link)
 
     return discovered_urls

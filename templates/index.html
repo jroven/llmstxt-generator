@@ -160,9 +160,23 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script id="app-config" type="application/json">{{ app_config | tojson }}</script>
     {% raw %}
     <script type="text/babel">
       const { useMemo, useState } = React;
+      const APP_CONFIG = (() => {
+        try {
+          const rawConfig = document.getElementById("app-config")?.textContent || "{}";
+          return JSON.parse(rawConfig);
+        } catch {
+          return {};
+        }
+      })();
+      const DEFAULT_MAX_DEPTH = Number(APP_CONFIG.default_max_depth ?? 1);
+      const DEFAULT_MAX_PAGES = Number(APP_CONFIG.default_max_pages ?? 20);
+      const MAX_DEPTH_CAP = Number(APP_CONFIG.max_depth_cap ?? 5);
+      const MAX_PAGES_CAP = Number(APP_CONFIG.max_pages_cap ?? 200);
+      const JOB_POLL_INTERVAL_MS = Number(APP_CONFIG.job_poll_interval_ms ?? 300);
 
       function buildDefaultFilenameFromUrl(rawUrl) {
         try {
@@ -180,8 +194,8 @@
 
       function App() {
         const [url, setUrl] = useState("");
-        const [maxDepth, setMaxDepth] = useState(1);
-        const [maxPages, setMaxPages] = useState(20);
+        const [maxDepth, setMaxDepth] = useState(DEFAULT_MAX_DEPTH);
+        const [maxPages, setMaxPages] = useState(DEFAULT_MAX_PAGES);
         const [loading, setLoading] = useState(false);
         const [error, setError] = useState("");
         const [result, setResult] = useState("");
@@ -224,7 +238,7 @@
             }
 
             while (true) {
-              await new Promise((resolve) => setTimeout(resolve, 300));
+              await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
               const jobResponse = await fetch(`/api/jobs/${jobId}`);
               const job = await jobResponse.json();
               if (!jobResponse.ok) {
@@ -308,7 +322,7 @@
                       id="max-depth"
                       type="number"
                       min="0"
-                      max="5"
+                      max={MAX_DEPTH_CAP}
                       value={maxDepth}
                       onChange={(e) => setMaxDepth(e.target.value)}
                       required
@@ -320,7 +334,7 @@
                       id="max-pages"
                       type="number"
                       min="1"
-                      max="200"
+                      max={MAX_PAGES_CAP}
                       value={maxPages}
                       onChange={(e) => setMaxPages(e.target.value)}
                       required

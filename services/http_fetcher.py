@@ -7,6 +7,14 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from core.constants import (
+    FETCH_MAX_BACKOFF_SECONDS,
+    FETCH_MAX_HTML_BYTES,
+    FETCH_MAX_RETRY_AFTER_SECONDS,
+    FETCH_RETRIES,
+    FETCH_TIMEOUT_SECONDS,
+    HTTP_USER_AGENT,
+)
 from core.errors import AppValidationError, CrawlError
 from services.fetch_cache import RunFetchCache
 
@@ -22,12 +30,12 @@ class HttpFetcher:
     def __init__(
         self,
         *,
-        timeout_seconds: float = 6.0,
-        retries: int = 1,
-        user_agent: str = "llms-txt-generator/0.1",
-        max_html_bytes: int = 2_000_000,
-        max_retry_after_seconds: float = 3.0,
-        max_backoff_seconds: float = 2.0,
+        timeout_seconds: float = FETCH_TIMEOUT_SECONDS,
+        retries: int = FETCH_RETRIES,
+        user_agent: str = HTTP_USER_AGENT,
+        max_html_bytes: int = FETCH_MAX_HTML_BYTES,
+        max_retry_after_seconds: float = FETCH_MAX_RETRY_AFTER_SECONDS,
+        max_backoff_seconds: float = FETCH_MAX_BACKOFF_SECONDS,
         opener: Callable[..., Any] = urlopen,
     ) -> None:
         self.timeout_seconds = timeout_seconds

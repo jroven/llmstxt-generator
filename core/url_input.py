@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from urllib.parse import urlsplit
 
@@ -16,12 +17,21 @@ _SCHEME_TYPO_MAP: dict[str, str] = {
 _SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+\-.]*):(/*)(.*)$")
 
 
-def build_url_attempts(raw_url: str) -> tuple[list[str], str, bool]:
+@dataclass(frozen=True)
+class UrlAttempts:
+    """Normalized URL attempts derived from a single user-provided URL input."""
+
+    attempt_urls: tuple[str, ...]
+    display_input: str
+    has_explicit_scheme: bool
+
+
+def build_url_attempts(raw_url: str) -> UrlAttempts:
     """
     Validate user URL input and return attempt URLs.
 
     Returns:
-        (attempt_urls, display_input, has_explicit_scheme)
+        UrlAttempts containing candidate attempt URLs and input metadata.
     """
     cleaned = (raw_url or "").strip()
     if not cleaned:
@@ -61,7 +71,11 @@ def build_url_attempts(raw_url: str) -> tuple[list[str], str, bool]:
             raise AppValidationError(
                 f'Invalid URL: "{cleaned}"\nPlease provide a website URL, e.g.\nhttps://example.com'
             )
-        return [cleaned], cleaned, True
+        return UrlAttempts(
+            attempt_urls=(cleaned,),
+            display_input=cleaned,
+            has_explicit_scheme=True,
+        )
 
     # Handle missing colon typo forms like "https//example.com" or "http//example.com".
     lowered = cleaned.lower()
@@ -78,4 +92,8 @@ def build_url_attempts(raw_url: str) -> tuple[list[str], str, bool]:
             f'Invalid URL: "{cleaned}"\nPlease provide a website URL, e.g.\nhttps://example.com'
         )
 
-    return [f"https://{normalized}", f"http://{normalized}"], normalized, False
+    return UrlAttempts(
+        attempt_urls=(f"https://{normalized}", f"http://{normalized}"),
+        display_input=normalized,
+        has_explicit_scheme=False,
+    )
