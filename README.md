@@ -1,5 +1,7 @@
 # llms_txt_generator
 
+Live app: https://llmstxt-generator-ojqw.onrender.com/
+
 Generate an `llms.txt` Markdown file from a website by crawling internal pages, extracting metadata, and formatting output to the llms.txt-style structure.
 
 ## Features
